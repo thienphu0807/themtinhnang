@@ -3,4 +3,13 @@
     <string name="reminder_channel_name">Nhắc việc của mèo</string>
     <string name="reminder_channel_description">Thông báo dễ thương giúp bạn không quên việc quan trọng</string>
     <string name="reminder_generic_message">Đến giờ hoàn thành việc rồi đó!</string>
+    <string name="auth_title">Đăng nhập để đồng bộ nhắc việc</string>
+    <string name="auth_subtitle">Kết nối tài khoản để lưu nhiệm vụ an toàn trên nhiều thiết bị.</string>
+    <string name="auth_google">Tiếp tục với Google</string>
+    <string name="auth_facebook">Tiếp tục với Facebook</string>
+    <string name="auth_loading">Đang xác thực...</string>
+    <string name="auth_cancelled">Đăng nhập đã bị huỷ.</string>
+    <string name="auth_generic_error">Không thể đăng nhập, vui lòng thử lại.</string>
+    <string name="facebook_app_id">1234567890</string>
+    <string name="facebook_client_token">FAKE_CLIENT_TOKEN</string>
 </resources>

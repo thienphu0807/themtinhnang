@@ -1,10 +1,12 @@
 package com.example.appquanlycv
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -15,12 +17,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
+import com.example.appquanlycv.ui.auth.AuthScreen
 import com.example.appquanlycv.reminder.TaskReminderScheduler
 import com.example.appquanlycv.ui.home.TaskScreen
 import com.example.appquanlycv.ui.home.TaskViewModel
 import com.example.appquanlycv.ui.home.TaskViewModelFactory
 import com.example.appquanlycv.ui.splash.SplashScreen
 import com.example.appquanlycv.ui.theme.AppquanlycvTheme
+import androidx.activity.result.contract.ActivityResultContracts
+import com.facebook.CallbackManager
+import com.facebook.FacebookCallback
+import com.facebook.FacebookException
+import com.facebook.login.LoginManager
+import com.facebook.login.LoginResult
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.AuthCredential
+import com.google.firebase.auth.FacebookAuthProvider
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.ktx.auth
+import com.google.firebase.ktx.Firebase
 
 class MainActivity : ComponentActivity() {
 
@@ -31,19 +51,119 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private var callbackManager: CallbackManager? = null
+
+    private val firebaseAuth: FirebaseAuth by lazy {
+        Firebase.auth
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        FirebaseApp.initializeApp(this)
+        callbackManager = CallbackManager.Factory.create()
         requestNotificationPermissionIfNeeded()
 
         setContent {
             AppquanlycvTheme {
                 var showSplash by remember { mutableStateOf(true) }
+                var currentUser by remember { mutableStateOf(firebaseAuth.currentUser) }
+                var authError by remember { mutableStateOf<String?>(null) }
+                var isLoading by remember { mutableStateOf(false) }
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+                val googleSignInClient = remember {
+                    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                        .requestEmail()
+                        .requestIdToken(getString(R.string.default_web_client_id))
+                        .build()
+                    GoogleSignIn.getClient(this, gso)
+                }
+
+                val handleCredential: (AuthCredential) -> Unit = { credential ->
+                    isLoading = true
+                    authError = null
+                    firebaseAuth.signInWithCredential(credential)
+                        .addOnCompleteListener { task ->
+                            isLoading = false
+                            if (task.isSuccessful) {
+                                currentUser = firebaseAuth.currentUser
+                            } else {
+                                authError = task.exception?.localizedMessage
+                                    ?: getString(R.string.auth_generic_error)
+                            }
+                        }
+                }
+
+                val launcher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult()
+                ) { result ->
+                    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    try {
+                        val account = task.getResult(ApiException::class.java)
+                        val credential = GoogleAuthProvider.getCredential(account.idToken, null)
+                        handleCredential(credential)
+                    } catch (e: ApiException) {
+                        isLoading = false
+                        authError = e.localizedMessage ?: getString(R.string.auth_generic_error)
+                    }
+                }
+
+                val rememberedCallbackManager = remember {
+                    callbackManager ?: CallbackManager.Factory.create().also { callbackManager = it }
+                }
+
+                DisposableEffect(rememberedCallbackManager) {
+                    val callback = object : FacebookCallback<LoginResult> {
+                        override fun onSuccess(result: LoginResult) {
+                            val accessToken = result.accessToken
+                            if (accessToken != null) {
+                                val credential = FacebookAuthProvider.getCredential(accessToken.token)
+                                handleCredential(credential)
+                            } else {
+                                authError = getString(R.string.auth_generic_error)
+                            }
+                        }
+
+                        override fun onCancel() {
+                            isLoading = false
+                            authError = getString(R.string.auth_cancelled)
+                        }
+
+                        override fun onError(error: FacebookException) {
+                            isLoading = false
+                            authError = error.localizedMessage ?: getString(R.string.auth_generic_error)
+                        }
+                    }
+                    LoginManager.getInstance().registerCallback(rememberedCallbackManager, callback)
+
+                    onDispose {
+                        LoginManager.getInstance().unregisterCallback(rememberedCallbackManager)
+                    }
+                }
 
                 if (showSplash) {
                     SplashScreen(
                         onFinish = { showSplash = false }
+                    )
+                } else if (currentUser == null) {
+                    AuthScreen(
+                        isLoading = isLoading,
+                        errorMessage = authError,
+                        onGoogleLogin = {
+                            isLoading = true
+                            authError = null
+                            launcher.launch(googleSignInClient.signInIntent)
+                        },
+                        onFacebookLogin = {
+                            isLoading = true
+                            authError = null
+                            LoginManager.getInstance().logInWithReadPermissions(
+                                this,
+                                rememberedCallbackManager,
+                                listOf("email", "public_profile")
+                            )
+                        }
                     )
                 } else {
                     TaskScreen(
@@ -73,6 +193,11 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        callbackManager?.onActivityResult(requestCode, resultCode, data)
     }
 
     companion object {
